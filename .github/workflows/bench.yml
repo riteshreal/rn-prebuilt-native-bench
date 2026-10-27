@@ -15,10 +15,14 @@ on:
       app:
         description: mmkv or vc
         default: vc
+      prebuild_run_id:
+        description: optional - reuse the AARs and dependency cache of an earlier run's prebuild job instead of rebuilding them
+        default: ''
 
 jobs:
   prebuild:
     name: prebuild AARs (${{ inputs.app }})
+    if: inputs.prebuild_run_id == ''
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 180
     steps:
@@ -52,6 +56,7 @@ jobs:
   timed:
     name: ${{ matrix.mode }} #${{ matrix.rep }} (${{ inputs.app }})
     needs: prebuild
+    if: ${{ !cancelled() && (needs.prebuild.result == 'success' || needs.prebuild.result == 'skipped') }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 120
     strategy:
@@ -68,7 +73,7 @@ jobs:
           path: |
             exp/gradle-home/caches/modules-2
             exp/gradle-home/wrapper
-          key: deps-${{ inputs.app }}-${{ github.run_id }}
+          key: deps-${{ inputs.app }}-${{ inputs.prebuild_run_id || github.run_id }}
           fail-on-cache-miss: true
 
       - uses: actions/download-artifact@v4
@@ -76,6 +81,8 @@ jobs:
         with:
           name: aars
           path: exp/maven-repo
+          run-id: ${{ inputs.prebuild_run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: One cold build
         run: ./ci-timed.sh ${{ inputs.app }} ${{ matrix.mode }} ${{ matrix.rep }}
@@ -90,7 +97,7 @@ jobs:
   report:
     name: report (${{ inputs.app }})
     needs: [prebuild, timed]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -100,6 +107,15 @@ jobs:
           pattern: results-*
           merge-multiple: true
           path: exp/results
+
+      - name: Prebuild results of the reused run (host, one-time prebuild cost)
+        if: inputs.prebuild_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: results-prebuild
+          path: exp/results
+          run-id: ${{ inputs.prebuild_run_id }}
+          github-token: ${{ github.token }}
 
       - name: Report
         run: ./ci-report.sh ${{ inputs.app }} 2

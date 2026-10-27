@@ -29,6 +29,7 @@ esac
 
 P="$R/$APPREPO/node_modules/react-native-nitro-modules"
 if [ ! -L "$P" ]; then
+  rm -rf "$P.npm-orig"   # a previous run may have left one behind; bun install restores the real dir each time
   mv "$P" "$P.npm-orig"
   ln -s "$R/nitro/packages/react-native-nitro-modules" "$P"
 fi

@@ -74,6 +74,17 @@ if (publishTo) {
 // ---------------------------------------------------------------- consume
 if (consumeFrom) {
   gradle.allprojects { p ->
+    // On the CI runner AGP bundles imported prefab .so files (e.g. libNitroModules.so) into the JNI output of
+    // source-built libraries, so the app finds the same native lib twice and mergeDebugNativeLibs fails with
+    // "2 files found with path ...". The duplicates are the same library: let the app pick the first one.
+    // (set at plugin-apply time: the React Native root plugin evaluates :app early and AGP rejects later changes)
+    p.pluginManager.withPlugin('com.android.application') {
+      def names = [] as Set
+      p.rootProject.subprojects.each { o -> names.addAll(ownNativeLibs(o.projectDir)) }
+      def patterns = names.collect { "**/lib${it}.so".toString() }
+      p.android.packaging.jniLibs.pickFirsts.addAll(patterns)
+      p.logger.lifecycle("[prebuilt] ${p.name}: pickFirst for ${patterns.size()} native libs")
+    }
     p.repositories {
       maven {
         url = uri(consumeFrom)

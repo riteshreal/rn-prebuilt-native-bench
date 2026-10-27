@@ -26,6 +26,10 @@ set +e
 "$ROOT/exp/cold-build.sh" "$LABEL" "$APP_DIR" "$MODE"
 RC=$?
 set -e
+# what every autolinked lib put into its JNI output (shows which .so were bundled where)
+node "$ROOT/exp/libdirs.js" "$APP_DIR" 2>/dev/null | while IFS= read -r d; do
+  find "$d/build/intermediates/library_jni" -name '*.so' -print0 2>/dev/null | xargs -0 stat -f '%z bytes  %N' 2>/dev/null
+done | sed "s|$ROOT/||" > "$RES/libjni-$LABEL.txt" || true
 # one row per job, so rows from the four jobs can be merged without clashing on summary.csv
 grep "^$LABEL," "$RES/summary.csv" > "$RES/$LABEL.row.csv" || true
 exit $RC
