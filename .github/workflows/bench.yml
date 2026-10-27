@@ -1,0 +1,52 @@
+name: prebuilt-native-bench
+
+# Cold (no-cache) Android build time of the react-native-mmkv and VisionCamera example apps,
+# compiling the libraries from source vs. consuming them as prebuilt AARs (Kotlin classes + C++ .so).
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: macOS runner label (macos-15-intel = x86_64, 4 cores; macos-14 = M1, 3 cores)
+        default: macos-15-intel
+      pairs:
+        description: interleaved source/prebuilt pairs per app
+        default: '2'
+
+jobs:
+  bench:
+    name: ${{ matrix.app }} on ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [mmkv, vc]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Android SDK components
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses >/dev/null || true
+          "$SDKM" "ndk;29.0.14206865" "cmake;3.22.1" "platforms;android-36" "build-tools;36.0.0" "build-tools;36.1.0"
+
+      - name: Run experiment
+        run: ./run-ci.sh ${{ matrix.app }} ${{ inputs.pairs }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.app }}
+          path: exp/results
+          retention-days: 14

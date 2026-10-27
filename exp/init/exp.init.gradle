@@ -1,0 +1,94 @@
+// Experiment init script: prebuild native Android libs (Kotlin + C++) as AARs and consume them.
+//
+//   -PprebuiltLibs=a,b,c       Gradle project names that are eligible for prebuilding
+//   -PprebuiltPublish=<dir>    publish those libs (debug variant) as AARs into this file:// maven repo
+//   -PprebuiltConsume=<dir>    resolve those libs from this repo instead of building the project
+//   EXP_TASK_TIMES=<file>      append "<taskPath>,<millis>,<outcome>" for every executed task
+//
+// Nothing in the upstream repos is modified; everything is driven from here.
+
+import java.util.concurrent.ConcurrentHashMap
+
+def props     = gradle.startParameter.projectProperties
+def libs      = (props['prebuiltLibs'] ?: '').split(',').collect { it.trim() }.findAll { it }
+def publishTo = props['prebuiltPublish']
+def consumeFrom = props['prebuiltConsume']
+def variant   = props['prebuiltVariant'] ?: 'debug'
+def PREBUILT_GROUP = 'prebuilt'
+def PREBUILT_VERSION = '1.0.0'
+
+// ---------------------------------------------------------------- publish
+if (publishTo) {
+  gradle.allprojects { p ->
+    if (!libs.contains(p.name)) return
+    p.group = PREBUILT_GROUP
+    p.version = PREBUILT_VERSION
+    p.pluginManager.withPlugin('com.android.library') {
+      p.pluginManager.apply('maven-publish')
+      p.android.publishing {
+        singleVariant(variant) { }
+      }
+      p.afterEvaluate {
+        p.publishing {
+          publications {
+            "${variant}"(MavenPublication) {
+              from p.components[variant]
+              groupId = PREBUILT_GROUP
+              artifactId = p.name
+              version = PREBUILT_VERSION
+            }
+          }
+          repositories {
+            maven { name = 'prebuilt'; url = uri(publishTo) }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------- consume
+if (consumeFrom) {
+  gradle.allprojects { p ->
+    p.repositories {
+      maven {
+        url = uri(consumeFrom)
+        content { includeGroup PREBUILT_GROUP }
+      }
+    }
+    p.configurations.configureEach { c ->
+      c.resolutionStrategy.dependencySubstitution {
+        libs.each { l ->
+          if (p.rootProject.findProject(":${l}") != null) {
+            substitute(project(":${l}")).using(module("${PREBUILT_GROUP}:${l}:${PREBUILT_VERSION}"))
+          }
+        }
+        // A prebuilt AAR may depend on a lib that stays on source (e.g. vision-camera-worklets -> react-native-worklets).
+        // The published metadata names it by its default project coordinates; map those back to the in-build project.
+        p.rootProject.subprojects.each { other ->
+          if (!libs.contains(other.name)) {
+            substitute(module("${other.group}:${other.name}")).using(project(other.path))
+          }
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------- timing
+def timesFile = System.getenv('EXP_TASK_TIMES')
+if (timesFile) {
+  def started = new ConcurrentHashMap<String, Long>()
+  def out = new File(timesFile)
+  def t0 = System.currentTimeMillis()
+  gradle.projectsLoaded   { synchronized (out) { out << "#phase,projectsLoaded,${System.currentTimeMillis() - t0}\n" } }
+  gradle.projectsEvaluated { synchronized (out) { out << "#phase,projectsEvaluated,${System.currentTimeMillis() - t0}\n" } }
+  gradle.taskGraph.beforeTask { t -> started[t.path] = System.nanoTime() }
+  gradle.taskGraph.afterTask { t, state ->
+    def begin = started.remove(t.path)
+    if (begin == null) return
+    def ms = ((System.nanoTime() - begin) / 1_000_000L) as long
+    def outcome = state.skipped ? 'SKIPPED' : (state.upToDate ? 'UP-TO-DATE' : (state.failure ? 'FAILED' : 'EXECUTED'))
+    synchronized (out) { out << "${t.path},${ms},${outcome}\n" }
+  }
+}
