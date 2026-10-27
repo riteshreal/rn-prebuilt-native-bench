@@ -27,9 +27,18 @@ Nothing in the upstream repos is modified: `exp/init/exp.init.gradle` publishes 
 
 ## Run it
 
-GitHub Actions: *Actions -> prebuilt-native-bench -> Run workflow* (runner label and number of pairs are inputs).
+GitHub Actions: *Actions -> prebuilt-native-bench -> Run workflow* (inputs: runner label, app `mmkv` or `vc`).
+Every timed build runs on its own runner, in parallel:
 
-Any Mac with JDK 17, Node, Bun and the Android SDK (NDK `29.0.14206865`, CMake `3.22.1`):
+| job | what it does |
+| --- | --- |
+| `prebuild` | `ci-prebuild.sh`: dependency warm-up, then compile + publish the AARs (checks each AAR ships only its own `.so`); caches the dependency store, uploads the AARs |
+| `timed` x4 | `ci-timed.sh`: mode `source`/`prebuilt` x rep 1/2, one cold build each, from the restored dependency store |
+| `report` | `ci-report.sh`: merges the rows, prints the comparison, fails if a run failed or a mode is missing results |
+
+Runs land on different machines of the same model, so the spread between the two reps of a mode is the noise to read the gap against.
+
+Any single Mac with JDK 17, Node, Bun and the Android SDK (NDK `29.0.14206865`, CMake `3.22.1`) can run everything back to back, interleaved on one machine:
 
 ```bash
 ./run-ci.sh mmkv 3

@@ -1,55 +1,112 @@
 name: prebuilt-native-bench
 
-# Cold (no-cache) Android build time of the react-native-mmkv and VisionCamera example apps,
-# compiling the libraries from source vs. consuming them as prebuilt AARs (Kotlin classes + C++ .so).
+# Cold (no-cache) Android build time of an example app, compiling the libraries from source vs. consuming
+# them as prebuilt AARs (Kotlin classes + C++ .so). Every timed build runs on its own runner, in parallel:
+#
+#   prebuild            fill the dependency cache, compile + publish the AARs (leak-checked)
+#   timed  (4 jobs)     mode [source, prebuilt] x rep [1, 2], one cold build each
+#   report              merge, print, fail if a run failed or a mode is missing results
 on:
   workflow_dispatch:
     inputs:
       runner:
         description: macOS runner label (macos-15-intel = x86_64, 4 cores; macos-14 = M1, 3 cores)
         default: macos-15-intel
-      pairs:
-        description: interleaved source/prebuilt pairs per app
-        default: '2'
-      apps:
-        description: JSON list of apps to run (mmkv, vc)
-        default: '["mmkv","vc"]'
+      app:
+        description: mmkv or vc
+        default: vc
 
 jobs:
-  bench:
-    name: ${{ matrix.app }} on ${{ inputs.runner }}
+  prebuild:
+    name: prebuild AARs (${{ inputs.app }})
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 300
-    strategy:
-      fail-fast: false
-      matrix:
-        app: ${{ fromJSON(inputs.apps) }}
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/toolchain
 
-      - uses: actions/setup-java@v4
+      - name: Dependency warm-up, then compile + publish AARs
+        run: ./ci-prebuild.sh ${{ inputs.app }}
+
+      # dependency store only (what the "cold" definition keeps); no build cache, transforms or outputs
+      - uses: actions/cache/save@v4
         with:
-          distribution: temurin
-          java-version: '17'
+          path: |
+            exp/gradle-home/caches/modules-2
+            exp/gradle-home/wrapper
+          key: deps-${{ inputs.app }}-${{ github.run_id }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/upload-artifact@v4
         with:
-          node-version: '22'
-
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Android SDK components
-        run: |
-          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$SDKM" --licenses >/dev/null || true
-          "$SDKM" "ndk;29.0.14206865" "cmake;3.22.1" "platforms;android-36" "build-tools;36.0.0" "build-tools;36.1.0"
-
-      - name: Run experiment
-        run: ./run-ci.sh ${{ matrix.app }} ${{ inputs.pairs }}
+          name: aars
+          path: exp/maven-repo
+          retention-days: 14
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: results-${{ matrix.app }}
+          name: results-prebuild
           path: exp/results
+          retention-days: 14
+
+  timed:
+    name: ${{ matrix.mode }} #${{ matrix.rep }} (${{ inputs.app }})
+    needs: prebuild
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [source, prebuilt]
+        rep: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/toolchain
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            exp/gradle-home/caches/modules-2
+            exp/gradle-home/wrapper
+          key: deps-${{ inputs.app }}-${{ github.run_id }}
+          fail-on-cache-miss: true
+
+      - uses: actions/download-artifact@v4
+        if: matrix.mode == 'prebuilt'
+        with:
+          name: aars
+          path: exp/maven-repo
+
+      - name: One cold build
+        run: ./ci-timed.sh ${{ inputs.app }} ${{ matrix.mode }} ${{ matrix.rep }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-${{ matrix.mode }}-${{ matrix.rep }}
+          path: exp/results
+          retention-days: 14
+
+  report:
+    name: report (${{ inputs.app }})
+    needs: [prebuild, timed]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          merge-multiple: true
+          path: exp/results
+
+      - name: Report
+        run: ./ci-report.sh ${{ inputs.app }} 2
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report
+          path: exp/results/${{ inputs.app }}.report.txt
           retention-days: 14

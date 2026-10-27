@@ -1,0 +1,22 @@
+name: toolchain
+description: JDK 17, Node, Bun and the Android SDK components both example apps need
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - uses: oven-sh/setup-bun@v2
+
+    - name: Android SDK components
+      shell: bash
+      run: |
+        SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+        yes | "$SDKM" --licenses >/dev/null || true
+        "$SDKM" "ndk;29.0.14206865" "cmake;3.22.1" "platforms;android-36" "build-tools;36.0.0" "build-tools;36.1.0"
