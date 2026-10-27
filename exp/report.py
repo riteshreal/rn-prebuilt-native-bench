@@ -2,10 +2,17 @@
 import csv, statistics, sys, collections, glob, os
 d, name = sys.argv[1], sys.argv[2]
 walls = collections.defaultdict(list)
+failed = []
 for r in csv.reader(open(os.path.join(d, 'summary.csv'))):
     lab, mode, wall, rc = r
-    if lab.startswith(name + '-') and rc == '0':
+    if not lab.startswith(name + '-'):
+        continue
+    if rc == '0':
         walls[mode].append(float(wall))
+    else:
+        failed.append(f"{lab} (exit {rc}, {wall}s)")
+if failed:
+    print(f"!! FAILED runs, excluded from the numbers below: {', '.join(failed)}")
 print(f"== {name}: cold build wall time (s)")
 for m in ('source', 'prebuilt'):
     v = walls[m]

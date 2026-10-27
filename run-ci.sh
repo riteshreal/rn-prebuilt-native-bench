@@ -35,3 +35,9 @@ python3 -I "$ROOT/exp/report.py" "$RES" "$APP" | tee "$RES/$APP.report.txt"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   { echo "### $APP"; echo '```'; cat "$RES/$APP.host.txt" "$RES/$APP.report.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 fi
+
+# 5. A failed timed run means the numbers are not valid: fail the job instead of reporting a green check.
+if awk -F, -v app="$APP" '$1 ~ ("^" app "-") && $4 != 0 { bad = 1 } END { exit !bad }' "$RES/summary.csv"; then
+  echo "ERROR: at least one timed $APP run failed (see exp/results/*.log); results are not valid" >&2
+  exit 1
+fi

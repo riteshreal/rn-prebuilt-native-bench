@@ -11,6 +11,9 @@ on:
       pairs:
         description: interleaved source/prebuilt pairs per app
         default: '2'
+      apps:
+        description: JSON list of apps to run (mmkv, vc)
+        default: '["mmkv","vc"]'
 
 jobs:
   bench:
@@ -20,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [mmkv, vc]
+        app: ${{ fromJSON(inputs.apps) }}
     steps:
       - uses: actions/checkout@v4
 
